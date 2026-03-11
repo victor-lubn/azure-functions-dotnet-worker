@@ -1,8 +1,9 @@
-﻿// Copyright (c) .NET Foundation. All rights reserved.
+// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the MIT License. See License.txt in the project root for license information.
 
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,6 +22,7 @@ namespace Microsoft.Azure.Functions.Worker.Converters
             {
                 throw new ArgumentNullException(nameof(options));
             }
+
             if (options.Value.Serializer == null)
             {
                 throw new InvalidOperationException(nameof(options.Value.Serializer));
@@ -41,31 +43,38 @@ namespace Microsoft.Azure.Functions.Worker.Converters
             if (context.Source is string sourceString)
             {
                 bytes = Encoding.UTF8.GetBytes(sourceString);
+                return await GetConversionResultFromDeserialization(bytes, 0, bytes.Length, context.TargetType);
             }
             else if (context.Source is ReadOnlyMemory<byte> sourceMemory)
             {
+                if (MemoryMarshal.TryGetArray(sourceMemory, out ArraySegment<byte> segment) && segment.Array != null)
+                {
+                    return await GetConversionResultFromDeserialization(
+                        segment.Array,
+                        segment.Offset,
+                        segment.Count,
+                        context.TargetType);
+                }
+
                 bytes = sourceMemory.ToArray();
+                return await GetConversionResultFromDeserialization(bytes, 0, bytes.Length, context.TargetType);
             }
 
-            if (bytes == null)
-            {
-                return ConversionResult.Unhandled();
-            }
-
-            return await GetConversionResultFromDeserialization(bytes, context.TargetType);
+            return ConversionResult.Unhandled();
         }
 
-        private async Task<ConversionResult> GetConversionResultFromDeserialization(byte[] bytes, Type type)
+        private async Task<ConversionResult> GetConversionResultFromDeserialization(
+            byte[] bytes,
+            int offset,
+            int count,
+            Type type)
         {
-            Stream? stream = null;
+            Stream stream = new MemoryStream(bytes, offset, count, writable: false);
 
             try
             {
-                stream = new MemoryStream(bytes);
-
                 var deserializedObject = await _serializer.DeserializeAsync(stream, type, CancellationToken.None);
                 return ConversionResult.Success(deserializedObject);
-
             }
             catch (Exception ex)
             {
@@ -73,15 +82,11 @@ namespace Microsoft.Azure.Functions.Worker.Converters
             }
             finally
             {
-                if (stream != null)
-                {
 #if NET6_0_OR_GREATER
-
-                    await ((IAsyncDisposable)stream).DisposeAsync();
+                await ((IAsyncDisposable)stream).DisposeAsync();
 #else
-                    ((IDisposable)stream).Dispose();
+                ((IDisposable)stream).Dispose();
 #endif
-                }
             }
         }
     }

@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation. All rights reserved.
+// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the MIT License. See License.txt in the project root for license information.
 
 using System;
@@ -25,6 +25,7 @@ namespace Microsoft.Azure.Functions.Worker.Tests.Converters
             {
                 PropertyNameCaseInsensitive = true
             });
+
             var wrapper = new OptionsWrapper<WorkerOptions>(options);
             _jsonPocoConverter = new JsonPocoConverter(wrapper);
         }
@@ -34,7 +35,7 @@ namespace Microsoft.Azure.Functions.Worker.Tests.Converters
         {
             string source = "invalid string";
             var context = new TestConverterContext(typeof(Book), source);
-                        
+
             var conversionResult = await _jsonPocoConverter.ConvertAsync(context);
 
             Assert.Equal(ConversionStatus.Failed, conversionResult.Status);
@@ -47,7 +48,7 @@ namespace Microsoft.Azure.Functions.Worker.Tests.Converters
         {
             string source = "{ \"Title\": \"a\", \"Author\": \"b\" }";
             var context = new TestConverterContext(typeof(Book), source);
-                        
+
             var conversionResult = await _jsonPocoConverter.ConvertAsync(context);
 
             Assert.Equal(ConversionStatus.Succeeded, conversionResult.Status);
@@ -58,10 +59,37 @@ namespace Microsoft.Azure.Functions.Worker.Tests.Converters
         }
 
         [Fact]
-        public async Task ConvertMemory()
+        public async Task ConvertMemoryFromEntireBuffer()
         {
             string source = "{ \"Title\": \"a\", \"Author\": \"b\" }";
             var sourceMemory = new ReadOnlyMemory<byte>(Encoding.UTF8.GetBytes(source));
+            var context = new TestConverterContext(typeof(Book), sourceMemory);
+
+            var conversionResult = await _jsonPocoConverter.ConvertAsync(context);
+
+            Assert.Equal(ConversionStatus.Succeeded, conversionResult.Status);
+
+            var book = TestUtility.AssertIsTypeAndConvert<Book>(conversionResult.Value);
+            Assert.Equal("a", book.Title);
+            Assert.Equal("b", book.Author);
+        }
+
+        [Fact]
+        public async Task ConvertMemoryFromBufferSegment()
+        {
+            string json = "{ \"Title\": \"a\", \"Author\": \"b\" }";
+
+            byte[] prefix = Encoding.UTF8.GetBytes("xxx");
+            byte[] payload = Encoding.UTF8.GetBytes(json);
+            byte[] suffix = Encoding.UTF8.GetBytes("yyy");
+
+            byte[] buffer = new byte[prefix.Length + payload.Length + suffix.Length];
+
+            Buffer.BlockCopy(prefix, 0, buffer, 0, prefix.Length);
+            Buffer.BlockCopy(payload, 0, buffer, prefix.Length, payload.Length);
+            Buffer.BlockCopy(suffix, 0, buffer, prefix.Length + payload.Length, suffix.Length);
+
+            var sourceMemory = new ReadOnlyMemory<byte>(buffer, prefix.Length, payload.Length);
             var context = new TestConverterContext(typeof(Book), sourceMemory);
 
             var conversionResult = await _jsonPocoConverter.ConvertAsync(context);
@@ -103,7 +131,7 @@ namespace Microsoft.Azure.Functions.Worker.Tests.Converters
 
             string source = "{ \"title\": \"a\", \"Author\": \"b\" }";
             var context = new TestConverterContext(typeof(NewtonsoftBook), source);
-                        
+
             var conversionResult = await jsonPocoConverter.ConvertAsync(context);
 
             Assert.Equal(ConversionStatus.Succeeded, conversionResult.Status);
